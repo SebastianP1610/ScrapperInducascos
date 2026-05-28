@@ -1,10 +1,11 @@
 # ScrapperInducascos
 
 Scraper en Python para revisar la categoría Shaft Pro de Inducascos cada 6 horas con GitHub Actions y enviar un correo cuando encuentre alguno de los productos buscados.
+Ahora usa Playwright para pulsar "Mostrar más" tantas veces como exista antes de extraer los productos visibles.
 
 ## Estructura
 
-- scraper.py: lógica de scraping y envío de correo.
+- scraper.py: lógica de scraping, carga dinámica y envío de correo.
 - requirements.txt: dependencias del proyecto.
 - .github/workflows/scraper.yml: workflow de GitHub Actions.
 - .env.example: plantilla para desarrollo local.
@@ -13,7 +14,8 @@ Scraper en Python para revisar la categoría Shaft Pro de Inducascos cada 6 hora
 
 1. Copia .env.example a .env y completa la contraseña de aplicación de Gmail.
 2. Instala dependencias con pip install -r requirements.txt.
-3. Ejecuta python scraper.py.
+3. Instala Chromium para Playwright con python -m playwright install chromium.
+4. Ejecuta python scraper.py.
 
 ## GitHub Actions
 

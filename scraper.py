@@ -3,7 +3,8 @@ import smtplib
 import sys
 from email.mime.text import MIMEText
 
-import requests
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
 try:
@@ -33,16 +34,45 @@ EMAIL_TO = os.getenv("EMAIL_TO")
 USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
 
 
-def scrape() -> list[str]:
-    """Devuelve la lista de keywords encontradas en la página."""
-    headers = {"User-Agent": USER_AGENT}
-    response = requests.get(URL, headers=headers, timeout=15)
-    response.raise_for_status()
+def load_full_page_html() -> str:
+    """Abre la página y pulsa 'Mostrar más' hasta que ya no exista."""
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent=USER_AGENT,
+            viewport={"width": 1440, "height": 2200},
+        )
+        page = context.new_page()
+        page.goto(URL, wait_until="networkidle", timeout=30000)
 
-    soup = BeautifulSoup(response.text, "html.parser")
+        while True:
+            button = page.get_by_role("button", name="Mostrar más")
+            try:
+                if button.count() == 0:
+                    break
+
+                button.first.click(timeout=5000)
+                page.wait_for_load_state("networkidle", timeout=30000)
+                page.wait_for_timeout(1000)
+            except PlaywrightTimeoutError:
+                break
+
+        html = page.content()
+        context.close()
+        browser.close()
+        return html
+
+
+def scrape() -> tuple[list[str], list[str]]:
+    """Devuelve las keywords encontradas y los productos visibles."""
+    html = load_full_page_html()
+    soup = BeautifulSoup(html, "html.parser")
     page_text = soup.get_text()
 
-    return [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
+    found_keywords = [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
+    visible_products = extract_products(soup)
+
+    return found_keywords, visible_products
 
 
 def extract_products(soup: BeautifulSoup) -> list[str]:
@@ -108,14 +138,7 @@ def build_email(found_keywords: list[str], visible_products: list[str]) -> tuple
 
 if __name__ == "__main__":
     try:
-        headers = {"User-Agent": USER_AGENT}
-        response = requests.get(URL, headers=headers, timeout=15)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-        page_text = soup.get_text()
-        found_keywords = [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
-        visible_products = extract_products(soup)
+        found_keywords, visible_products = scrape()
     except Exception as error:
         subject = "⚠️ [Inducascos] Error en el scraper"
         body = f"El scraper falló al intentar acceder a {URL}.\n\nError: {error}"
