@@ -45,6 +45,26 @@ def scrape() -> list[str]:
     return [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
 
 
+def extract_products(soup: BeautifulSoup) -> list[str]:
+    """Extrae los nombres visibles de productos dentro de la sección."""
+    products: list[str] = []
+
+    for node in soup.select("article .vtex-product-summary-2-x-productBrand"):
+        product_name = " ".join(node.get_text(" ", strip=True).split())
+        if product_name and product_name not in products:
+            products.append(product_name)
+
+    if products:
+        return products
+
+    for node in soup.select("article"):
+        text = " ".join(node.get_text(" ", strip=True).split())
+        if text and text not in products:
+            products.append(text)
+
+    return products
+
+
 def send_email(subject: str, body: str) -> None:
     """Envía un correo usando SMTP con STARTTLS."""
     if not all([SMTP_USER, SMTP_PASS, EMAIL_FROM, EMAIL_TO]):
@@ -62,13 +82,15 @@ def send_email(subject: str, body: str) -> None:
         server.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
 
 
-def build_email(found_keywords: list[str]) -> tuple[str, str]:
+def build_email(found_keywords: list[str], visible_products: list[str]) -> tuple[str, str]:
     """Construye el asunto y cuerpo del correo según el resultado."""
     if found_keywords:
         subject = "✅ [Inducascos] Productos 343 DV encontrados"
         body = (
             f"Se encontraron los siguientes productos en {URL}:\n\n"
             + "\n".join(f"- {keyword}" for keyword in found_keywords)
+            + "\n\nProductos visibles en la sección:\n"
+            + "\n".join(f"- {product}" for product in visible_products)
             + f"\n\nVisita la página: {URL}"
         )
     else:
@@ -76,6 +98,8 @@ def build_email(found_keywords: list[str]) -> tuple[str, str]:
         body = (
             f"Ninguna de las siguientes palabras clave fue encontrada en {URL}:\n\n"
             + "\n".join(f"- {keyword}" for keyword in KEYWORDS)
+            + "\n\nProductos visibles en la sección:\n"
+            + "\n".join(f"- {product}" for product in visible_products)
             + "\n\nSe revisará nuevamente en 6 horas."
         )
 
@@ -84,7 +108,14 @@ def build_email(found_keywords: list[str]) -> tuple[str, str]:
 
 if __name__ == "__main__":
     try:
-        found_keywords = scrape()
+        headers = {"User-Agent": USER_AGENT}
+        response = requests.get(URL, headers=headers, timeout=15)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        page_text = soup.get_text()
+        found_keywords = [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
+        visible_products = extract_products(soup)
     except Exception as error:
         subject = "⚠️ [Inducascos] Error en el scraper"
         body = f"El scraper falló al intentar acceder a {URL}.\n\nError: {error}"
@@ -96,7 +127,7 @@ if __name__ == "__main__":
             sys.exit(1)
         sys.exit(1)
 
-    subject, body = build_email(found_keywords)
+    subject, body = build_email(found_keywords, visible_products)
 
     try:
         send_email(subject, body)
