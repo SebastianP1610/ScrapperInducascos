@@ -1,0 +1,107 @@
+import os
+import smtplib
+import sys
+from email.mime.text import MIMEText
+
+import requests
+from bs4 import BeautifulSoup
+
+try:
+    from dotenv import load_dotenv
+except ImportError:  # pragma: no cover - only needed for local development
+    load_dotenv = None
+
+
+if load_dotenv is not None:
+    load_dotenv()
+
+
+URL = "https://www.inducascos.com/repuestos/shaft-pro?map=c,b"
+KEYWORDS = [
+    "Shaft Pro 343 DV",
+    "SHPRO-343DV",
+    "Tapizado Shaft Pro 343 DV",
+]
+
+USER_AGENT = os.getenv("INDUCASCOS_USER_AGENT", "Mozilla/5.0")
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USERNAME")
+SMTP_PASS = os.getenv("SMTP_PASSWORD")
+EMAIL_FROM = os.getenv("EMAIL_FROM")
+EMAIL_TO = os.getenv("EMAIL_TO")
+USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+
+
+def scrape() -> list[str]:
+    """Devuelve la lista de keywords encontradas en la página."""
+    headers = {"User-Agent": USER_AGENT}
+    response = requests.get(URL, headers=headers, timeout=15)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    page_text = soup.get_text()
+
+    return [keyword for keyword in KEYWORDS if keyword.lower() in page_text.lower()]
+
+
+def send_email(subject: str, body: str) -> None:
+    """Envía un correo usando SMTP con STARTTLS."""
+    if not all([SMTP_USER, SMTP_PASS, EMAIL_FROM, EMAIL_TO]):
+        raise ValueError("Faltan variables de entorno para el correo")
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = EMAIL_FROM
+    msg["To"] = EMAIL_TO
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        if USE_TLS:
+            server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
+
+
+def build_email(found_keywords: list[str]) -> tuple[str, str]:
+    """Construye el asunto y cuerpo del correo según el resultado."""
+    if found_keywords:
+        subject = "✅ [Inducascos] Productos 343 DV encontrados"
+        body = (
+            f"Se encontraron los siguientes productos en {URL}:\n\n"
+            + "\n".join(f"- {keyword}" for keyword in found_keywords)
+            + f"\n\nVisita la página: {URL}"
+        )
+    else:
+        subject = "❌ [Inducascos] Productos 343 DV no disponibles aún"
+        body = (
+            f"Ninguna de las siguientes palabras clave fue encontrada en {URL}:\n\n"
+            + "\n".join(f"- {keyword}" for keyword in KEYWORDS)
+            + "\n\nSe revisará nuevamente en 6 horas."
+        )
+
+    return subject, body
+
+
+if __name__ == "__main__":
+    try:
+        found_keywords = scrape()
+    except Exception as error:
+        subject = "⚠️ [Inducascos] Error en el scraper"
+        body = f"El scraper falló al intentar acceder a {URL}.\n\nError: {error}"
+        print(f"ERROR al scrapear: {error}", file=sys.stderr)
+        try:
+            send_email(subject, body)
+        except Exception as mail_error:
+            print(f"ERROR al enviar correo: {mail_error}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(1)
+
+    subject, body = build_email(found_keywords)
+
+    try:
+        send_email(subject, body)
+        print(f"Correo enviado: {subject}")
+        print(f"Keywords encontradas: {found_keywords if found_keywords else 'ninguna'}")
+    except Exception as error:
+        print(f"ERROR al enviar correo: {error}", file=sys.stderr)
+        sys.exit(1)
